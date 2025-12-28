@@ -4,9 +4,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
-#include <direct.h>
-#include <windows.h>
 
 #define MAX_NAME_LEN 128
 #define MAX_ID_LEN 32
@@ -66,9 +63,9 @@ static void trim(char* s) {
     if (!s) return;
     size_t start = 0;
     size_t len = strlen(s);
-    while (start < len && isspace((unsigned char)s[start])) start++;
+    while (start < len && isSpaceChar(s[start])) start++;
     size_t end = len;
-    while (end > start && isspace((unsigned char)s[end - 1])) end--;
+    while (end > start && isSpaceChar(s[end - 1])) end--;
     if (start > 0) memmove(s, s + start, end - start);
     s[end - start] = '\0';
 }
@@ -88,7 +85,7 @@ static int isLettersSpaces(const char* s) {
     if (!s || *s == '\0') return 0;
     int hasLetter = 0;
     for (size_t i = 0; s[i]; ++i) {
-        if (isalpha((unsigned char)s[i])) {
+        if (isAlphaChar(s[i])) {
             hasLetter = 1;
             continue;
         }
@@ -102,7 +99,7 @@ static int isLettersSpaces(const char* s) {
 static int isDigitsOnly(const char* s) {
     if (!s || *s == '\0') return 0;
     for (size_t i = 0; s[i]; ++i) {
-        if (!isdigit((unsigned char)s[i])) return 0;
+        if (!isDigitChar(s[i])) return 0;
     }
     return 1;
 }
@@ -111,7 +108,7 @@ static int isDigitsOnly(const char* s) {
 static int isCourseCode(const char* s) {
     if (!s || *s == '\0') return 0;
     for (size_t i = 0; s[i]; ++i) {
-        if (!isalnum((unsigned char)s[i])) return 0;
+        if (!isAlnumChar(s[i])) return 0;
     }
     return 1;
 }
@@ -120,7 +117,7 @@ static int isCourseCode(const char* s) {
 static int isSemesterString(const char* s) {
     if (!s || *s == '\0') return 0;
     for (size_t i = 0; s[i]; ++i) {
-        if (!isalnum((unsigned char)s[i]) && s[i] != ' ') return 0;
+        if (!isAlnumChar(s[i]) && s[i] != ' ') return 0;
     }
     return 1;
 }
@@ -131,8 +128,8 @@ typedef int (*ValidatorFn)(const char*);
 static int equalsIgnoreCase(const char* a, const char* b) {
     if (!a || !b) return 0;
     while (*a && *b) {
-        char ca = (char)tolower((unsigned char)*a);
-        char cb = (char)tolower((unsigned char)*b);
+        char ca = toLowerChar(*a);
+        char cb = toLowerChar(*b);
         if (ca != cb) return 0;
         a++;
         b++;
@@ -170,7 +167,7 @@ static int readIntWithPrompt(const char* prompt, int minValue, int maxValue) {
             continue;
         }
         while (*endptr) {
-            if (!isspace((unsigned char)*endptr)) break;
+            if (!isSpaceChar(*endptr)) break;
             endptr++;
         }
         if (*endptr && *endptr != '\n') {
@@ -208,7 +205,7 @@ static int readIntWithPromptOrExit(const char* prompt, int minValue, int maxValu
             continue;
         }
         while (*endptr) {
-            if (!isspace((unsigned char)*endptr)) break;
+        if (!isSpaceChar(*endptr)) break;
             endptr++;
         }
         if (*endptr && *endptr != '\n') {
@@ -515,17 +512,6 @@ static void collectByName(AVLNode* root, const char* name, NodeList* list) {
     collectByName(root->right, name, list);
 }
 
-// set working directory to the executable's folder.
-static void setWorkingDirToExe(void) {
-    char path[MAX_PATH];
-    if (GetModuleFileNameA(NULL, path, MAX_PATH) == 0) return;
-    char* lastSlash = strrchr(path, '\\');
-    if (!lastSlash) lastSlash = strrchr(path, '/');
-    if (!lastSlash) return;
-    *lastSlash = '\0';
-    _chdir(path);
-}
-
 // check if a name already exists in the AVL tree.
 static int nameExists(AVLNode* root, const char* name, const char* excludeID) {
     if (!root) return 0;
@@ -625,7 +611,6 @@ static void saveTreeToFile(const char* filename, AVLNode* root) {
     saveTreeRecursive(file, root);
     fclose(file);
     printf("[OK] Data saved to %s\n", filename);
-    printf("[INFO] Saved in directory: %s\n", _getcwd(NULL, 0));
 }
 
 // count total students in the AVL tree.
@@ -803,7 +788,7 @@ static void freeHashTable(HashTable* table) {
 static unsigned long hashString(const char* s, int mod) {
     unsigned long hash = 0;
     while (*s) {
-        hash = (hash << 5) + (unsigned char)tolower((unsigned char)*s);
+        hash = (hash << 5) + (unsigned char)toLowerChar(*s);
         s++;
     }
     return hash % (unsigned long)mod;
@@ -1326,7 +1311,6 @@ static void printHashInfo(void) {
 }
 
 int main() {
-    setWorkingDirToExe();
     AVLNode* root = NULL;
     HashTable table;
     table.entries = NULL;
@@ -1412,3 +1396,28 @@ int main() {
     return 0;
 }
 
+// check for basic ASCII whitespace.
+static int isSpaceChar(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+
+// check for ASCII letter.
+static int isAlphaChar(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+// check for ASCII digit.
+static int isDigitChar(char c) {
+    return c >= '0' && c <= '9';
+}
+
+// check for ASCII alphanumeric.
+static int isAlnumChar(char c) {
+    return isAlphaChar(c) || isDigitChar(c);
+}
+
+// convert ASCII letter to lowercase.
+static char toLowerChar(char c) {
+    if (c >= 'A' && c <= 'Z') return (char)(c + ('a' - 'A'));
+    return c;
+}
