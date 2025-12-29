@@ -653,7 +653,7 @@ static void saveTreeToFile(const char* filename, AVLNode* root) {
     }
     saveTreeRecursive(file, root);
     fclose(file);
-    printf("[OK] Data saved to %s\n", path);
+    printf("[OK] Data saved to %s\n", filename);
 }
 
 // count total students in the AVL tree.
@@ -991,7 +991,7 @@ static void saveHashTableToFile(HashTable* table, const char* filename) {
         if (entry->state == HASH_OCCUPIED) saveStudentCourses(file, &entry->data);
     }
     fclose(file);
-    printf("[OK] Hash table data saved to %s\n", path);
+    printf("[OK] Hash table data saved to %s\n", filename);
 }
 
 // menu flow to add a registration.
@@ -1446,4 +1446,3 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-// check for basic ASCII whitespace.
