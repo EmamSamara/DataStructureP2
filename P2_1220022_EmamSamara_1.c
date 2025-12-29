@@ -316,12 +316,8 @@ static CourseRecord* appendCourseRecord(CourseRecord* head, CourseRecord* record
     if (!record) return head;
     CourseRecord* current = head;
     while (current) {
-        if (equalsIgnoreCase(current->courseCode, record->courseCode)) {
-            strncpy(current->courseTitle, record->courseTitle, MAX_TITLE_LEN - 1);
-            current->courseTitle[MAX_TITLE_LEN - 1] = '\0';
-            current->creditHours = record->creditHours;
-            strncpy(current->semester, record->semester, MAX_SEMESTER_LEN - 1);
-            current->semester[MAX_SEMESTER_LEN - 1] = '\0';
+        if (equalsIgnoreCase(current->courseCode, record->courseCode) &&
+            equalsIgnoreCase(current->semester, record->semester)) {
             free(record);
             return head;
         }
@@ -339,12 +335,13 @@ static CourseRecord* appendCourseRecord(CourseRecord* head, CourseRecord* record
 }
 
 // remove a course from the list.
-static CourseRecord* removeCourseRecord(CourseRecord* head, const char* courseCode, int* removed) {
+static CourseRecord* removeCourseRecord(CourseRecord* head, const char* courseCode, const char* semester, int* removed) {
     if (removed) *removed = 0;
     CourseRecord* current = head;
     CourseRecord* prev = NULL;
     while (current) {
-        if (equalsIgnoreCase(current->courseCode, courseCode)) {
+        if (equalsIgnoreCase(current->courseCode, courseCode) &&
+            equalsIgnoreCase(current->semester, semester)) {
             if (prev) prev->next = current->next;
             else head = current->next;
             free(current);
@@ -509,6 +506,7 @@ static AVLNode* deleteStudent(AVLNode* root, const char* studentID) {
             root->right = deleteStudent(root->right, temp->data.studentID);
         }
     }
+    if (!root) return NULL;
     root->height = 1 + maxInt(nodeHeight(root->left), nodeHeight(root->right));
     int balance = getBalance(root);
     if (balance > 1 && getBalance(root->left) >= 0) return rightRotate(root);
@@ -648,7 +646,7 @@ static void saveTreeToFile(const char* filename, AVLNode* root) {
     buildPath(filename, path, sizeof(path));
     FILE* file = fopen(path, "w");
     if (!file) {
-        printf("[ERROR] Unable to write to %s\n", path);
+        printf("[ERROR] Unable to write to %s\n", filename);
         return;
     }
     saveTreeRecursive(file, root);
@@ -672,7 +670,9 @@ static void exportStudentsRecursive(FILE* file, AVLNode* node) {
 
 // write student data to students_hash.data.
 static void exportStudentsData(const char* filename, AVLNode* root) {
-    FILE* file = fopen(filename, "w");
+    char path[512];
+    buildPath(filename, path, sizeof(path));
+    FILE* file = fopen(path, "w");
     if (!file) {
         printf("[ERROR] Cannot open %s\n", filename);
         return;
@@ -705,7 +705,7 @@ static void loadHashTableFromFile(HashTable* table, const char* filename) {
     buildPath(filename, path, sizeof(path));
     FILE* file = fopen(path, "r");
     if (!file) {
-        printf("[ERROR] Cannot open %s\n", path);
+        printf("[ERROR] Cannot open %s\n", filename);
         return;
     }
     char line[LINE_BUFFER];
@@ -743,7 +743,7 @@ static AVLNode* loadFromFile(const char* filename, AVLNode* root) {
     buildPath(filename, path, sizeof(path));
     FILE* file = fopen(path, "r");
     if (!file) {
-        printf("[INFO] File %s not found. Starting with empty records.\n", path);
+        printf("[INFO] File %s not found. Starting with empty records.\n", filename);
         return root;
     }
     char line[LINE_BUFFER];
@@ -773,7 +773,7 @@ static AVLNode* loadFromFile(const char* filename, AVLNode* root) {
         loaded++;
     }
     fclose(file);
-    printf("[OK] Loaded %d registrations from %s\n", loaded, path);
+    printf("[OK] Loaded %d registrations from %s\n", loaded, filename);
     return root;
 }
 
@@ -837,7 +837,7 @@ static void freeHashTable(HashTable* table) {
 static unsigned long hashString(const char* s, int mod) {
     unsigned long hash = 0;
     while (*s) {
-        hash = (hash << 5) + (unsigned char)toLowerChar(*s);
+        hash = (hash << 5) + (char)toLowerChar(*s);
         s++;
     }
     return hash % (unsigned long)mod;
@@ -869,14 +869,16 @@ static int hashInsert(HashTable* table, const char* name, const char* id, const 
         }
         if (entry->state == HASH_DELETED && firstDeleted < 0) firstDeleted = (int)probe;
         else if (entry->state == HASH_OCCUPIED && equalsIgnoreCase(entry->data.name, name)) {
-            strncpy(entry->data.name, name, MAX_NAME_LEN - 1);
-            entry->data.name[MAX_NAME_LEN - 1] = '\0';
-            strncpy(entry->data.studentID, id, MAX_ID_LEN - 1);
-            entry->data.studentID[MAX_ID_LEN - 1] = '\0';
-            strncpy(entry->data.major, major, MAX_MAJOR_LEN - 1);
-            entry->data.major[MAX_MAJOR_LEN - 1] = '\0';
-            entry->data.courses = appendCourseRecord(entry->data.courses, course, NULL);
-            return 1;
+            if (strcmp(entry->data.studentID, id) == 0) {
+                strncpy(entry->data.name, name, MAX_NAME_LEN - 1);
+                entry->data.name[MAX_NAME_LEN - 1] = '\0';
+                strncpy(entry->data.studentID, id, MAX_ID_LEN - 1);
+                entry->data.studentID[MAX_ID_LEN - 1] = '\0';
+                strncpy(entry->data.major, major, MAX_MAJOR_LEN - 1);
+                entry->data.major[MAX_MAJOR_LEN - 1] = '\0';
+                entry->data.courses = appendCourseRecord(entry->data.courses, course, NULL);
+                return 1;
+            }
         }
     }
     if (firstDeleted >= 0) {
@@ -909,10 +911,25 @@ static int hashSearch(HashTable* table, const char* name) {
     return -1;
 }
 
-// delete a student name from the hash table.
-static int hashDelete(HashTable* table, const char* name) {
-    int index = hashSearch(table, name);
-    if (index < 0) return 0;
+// collect all indices that match a name in the hash table.
+static int collectHashMatches(HashTable* table, const char* name, int* indices, int maxCount) {
+    if (!table->entries || !indices || maxCount <= 0) return 0;
+    int count = 0;
+    for (int i = 0; i < table->capacity; i++) {
+        HashEntry* entry = &table->entries[i];
+        if (entry->state == HASH_OCCUPIED && equalsIgnoreCase(entry->data.name, name)) {
+            indices[count++] = i;
+            if (count == maxCount) break;
+        }
+    }
+    return count;
+}
+
+// delete a student record at a specific index in the hash table.
+static int hashDeleteAt(HashTable* table, int index) {
+    if (!table->entries) return 0;
+    if (index < 0 || index >= table->capacity) return 0;
+    if (table->entries[index].state != HASH_OCCUPIED) return 0;
     freeCourseRecords(table->entries[index].data.courses);
     table->entries[index].data.courses = NULL;
     table->entries[index].state = HASH_DELETED;
@@ -955,7 +972,9 @@ static void printHashTable(HashTable* table) {
 static void buildHashTable(HashTable* table, AVLNode* root) {
     int studentCount = countStudents(root);
     if (studentCount == 0) {
-        FILE* empty = fopen("students_hash.data", "w");
+        char path[512];
+        buildPath("students_hash.data", path, sizeof(path));
+        FILE* empty = fopen(path, "w");
         if (empty) fclose(empty);
         printf("[INFO] No student records to hash.\n");
         return;
@@ -983,7 +1002,7 @@ static void saveHashTableToFile(HashTable* table, const char* filename) {
     buildPath(filename, path, sizeof(path));
     FILE* file = fopen(path, "w");
     if (!file) {
-        printf("[ERROR] Cannot open %s.\n", path);
+        printf("[ERROR] Cannot open %s.\n", filename);
         return;
     }
     for (int i = 0; i < table->capacity; i++) {
@@ -991,7 +1010,7 @@ static void saveHashTableToFile(HashTable* table, const char* filename) {
         if (entry->state == HASH_OCCUPIED) saveStudentCourses(file, &entry->data);
     }
     fclose(file);
-    printf("[OK] Hash table data saved to %s\n", filename);
+    printf("[OK] Hash table data saved to %s\n", path);
 }
 
 // menu flow to add a registration.
@@ -1014,7 +1033,7 @@ static AVLNode* insertRegistrationFlow(AVLNode* root) {
     int courseCount = readIntWithPromptOrExit("How many courses to add? ", 1, 20, &canceled);
     if (canceled) return root;
     int createdStudent = 0;
-    for (int i = 0; i < courseCount; i++) {
+    for (int i = 0; i < courseCount; ) {
         printf("Course %d of %d:\n", i + 1, courseCount);
         if (!getValidatedInput("Enter Course Code: ", courseCode, sizeof(courseCode), isCourseCode, "[ERROR] Course code must be alphanumeric with no spaces.\n")) return root;
         if (!getValidatedInput("Enter Course Title: ", courseTitle, sizeof(courseTitle), isLettersSpaces, "[ERROR] Course title must contain letters only.\n")) return root;
@@ -1030,8 +1049,12 @@ static AVLNode* insertRegistrationFlow(AVLNode* root) {
         int newCourse = 0;
         root = insertRegistration(root, name, id, major, course, &newStudent, &newCourse);
         if (newStudent) createdStudent = 1;
-        if (newCourse) printf("[OK] Added course.\n");
-        else printf("[INFO] Existing course updated.\n");
+        if (newCourse) {
+            printf("[OK] Added course.\n");
+            i++;
+        } else {
+            printf("[ERROR] Cannot register the same course in the same semester. Try again.\n");
+        }
     }
     if (createdStudent) printf("[OK] Student created with registrations.\n");
     return root;
@@ -1044,15 +1067,18 @@ static AVLNode* findStudentByNameFlow(AVLNode* root) {
         return root;
     }
     char query[MAX_NAME_LEN];
-    printf("[INFO] Type 'exit' to return to main menu.\n");
-    if (!getValidatedInput("Enter Student Name: ", query, sizeof(query), isLettersSpaces, "[ERROR] Name must contain letters only.\n")) return root;
     NodeList list;
-    initNodeList(&list);
-    collectByName(root, query, &list);
-    if (list.size == 0) {
-        printf("[INFO] No student found with that name.\n");
-        freeNodeList(&list);
-        return root;
+    while (1) {
+        printf("[INFO] Type 'exit' to return to main menu.\n");
+        if (!getValidatedInput("Enter Student Name: ", query, sizeof(query), isLettersSpaces, "[ERROR] Name must contain letters only.\n")) return root;
+        initNodeList(&list);
+        collectByName(root, query, &list);
+        if (list.size == 0) {
+            printf("[INFO] No student found with that name. Try again or type 'exit'.\n");
+            freeNodeList(&list);
+            continue;
+        }
+        break;
     }
     printf("Students found with this name:\n");
     for (int i = 0; i < list.size; i++) {
@@ -1140,6 +1166,12 @@ static AVLNode* findStudentByNameFlow(AVLNode* root) {
                 CourseRecord* next = current->next;
                 current->next = NULL;
                 root = insertRegistration(root, nameCopy, newId, majorCopy, current, NULL, NULL);
+                if (!root) {
+                    freeCourseRecords(next);
+                    freeNodeList(&list);
+                    printf("[ERROR] Failed to update student ID.\n");
+                    return root;
+                }
                 current = next;
             }
             target = findByID(root, newId);
@@ -1206,16 +1238,26 @@ static AVLNode* findStudentByNameFlow(AVLNode* root) {
                         printf("[ERROR] Unable to create course record.\n");
                         continue;
                     }
-                    target->data.courses = appendCourseRecord(target->data.courses, course, NULL);
-                    printf("[OK] Course added/updated.\n");
+                    int added = 0;
+                    target->data.courses = appendCourseRecord(target->data.courses, course, &added);
+                    if (added) {
+                        printf("[OK] Course added.\n");
+                    } else {
+                        printf("[ERROR] Cannot register the same course in the same semester.\n");
+                    }
                 } else if (action == 2) {
                     char courseCode[MAX_CODE_LEN];
+                    char semester[MAX_SEMESTER_LEN];
                     if (!getValidatedInput("Enter Course Code to remove: ", courseCode, sizeof(courseCode), isCourseCode, "[ERROR] Course code must be alphanumeric with no spaces.\n")) {
                         freeNodeList(&list);
                         return root;
                     }
+                    if (!getValidatedInput("Enter Semester: ", semester, sizeof(semester), isSemesterString, "[ERROR] Semester must contain letters and numbers only.\n")) {
+                        freeNodeList(&list);
+                        return root;
+                    }
                     int removed = 0;
-                    target->data.courses = removeCourseRecord(target->data.courses, courseCode, &removed);
+                    target->data.courses = removeCourseRecord(target->data.courses, courseCode, semester, &removed);
                     if (removed) {
                         printf("[OK] Course removed.\n");
                         if (!target->data.courses) {
@@ -1265,9 +1307,11 @@ static AVLNode* deleteRegistrationFlow(AVLNode* root) {
         return root;
     }
     char courseCode[MAX_CODE_LEN];
+    char semester[MAX_SEMESTER_LEN];
     if (!getValidatedInput("Enter Course Code to remove: ", courseCode, sizeof(courseCode), isCourseCode, "[ERROR] Course code must be alphanumeric with no spaces.\n")) return root;
+    if (!getValidatedInput("Enter Semester: ", semester, sizeof(semester), isSemesterString, "[ERROR] Semester must contain letters and numbers only.\n")) return root;
     int removed = 0;
-    student->data.courses = removeCourseRecord(student->data.courses, courseCode, &removed);
+    student->data.courses = removeCourseRecord(student->data.courses, courseCode, semester, &removed);
     if (!removed) {
         printf("[ERROR] Course not found for this student.\n");
         return root;
@@ -1304,22 +1348,32 @@ static void insertIntoHashFlow(HashTable* table) {
         printf("[ERROR] Student ID already exists in hash table. Try again.\n");
     }
     if (!getValidatedInput("Enter Major: ", major, sizeof(major), isLettersSpaces, "[ERROR] Major must contain letters only.\n")) return;
-    if (!getValidatedInput("Enter Course Code: ", courseCode, sizeof(courseCode), isCourseCode, "[ERROR] Course code must be alphanumeric with no spaces.\n")) return;
-    if (!getValidatedInput("Enter Course Title: ", courseTitle, sizeof(courseTitle), isLettersSpaces, "[ERROR] Course title must contain letters only.\n")) return;
     int canceled = 0;
-    int hours = readIntWithPromptOrExit("Enter Credit Hours: ", 1, 20, &canceled);
+    int courseCount = readIntWithPromptOrExit("How many courses to add? ", 1, 20, &canceled);
     if (canceled) return;
-    if (!getValidatedInput("Enter Semester: ", semester, sizeof(semester), isSemesterString, "[ERROR] Semester must contain letters and numbers only.\n")) return;
-    CourseRecord* course = createCourseRecord(courseCode, courseTitle, hours, semester);
-    if (!course) {
-        printf("[ERROR] Unable to create course record.\n");
-        return;
+    int addedAny = 0;
+    for (int i = 0; i < courseCount; ) {
+        printf("Course %d of %d:\n", i + 1, courseCount);
+        if (!getValidatedInput("Enter Course Code: ", courseCode, sizeof(courseCode), isCourseCode, "[ERROR] Course code must be alphanumeric with no spaces.\n")) return;
+        if (!getValidatedInput("Enter Course Title: ", courseTitle, sizeof(courseTitle), isLettersSpaces, "[ERROR] Course title must contain letters only.\n")) return;
+        int hours = readIntWithPromptOrExit("Enter Credit Hours: ", 1, 20, &canceled);
+        if (canceled) return;
+        if (!getValidatedInput("Enter Semester: ", semester, sizeof(semester), isSemesterString, "[ERROR] Semester must contain letters and numbers only.\n")) return;
+        CourseRecord* course = createCourseRecord(courseCode, courseTitle, hours, semester);
+        if (!course) {
+            printf("[ERROR] Unable to create course record.\n");
+            continue;
+        }
+        if (hashInsert(table, name, id, major, course)) {
+            addedAny = 1;
+            printf("[OK] Added course.\n");
+            i++;
+        } else {
+            free(course);
+            printf("[ERROR] Unable to insert into hash table. Try again.\n");
+        }
     }
-    if (hashInsert(table, name, id, major, course)) printf("[OK] Student inserted/updated in hash table.\n");
-    else {
-        free(course);
-        printf("[ERROR] Unable to insert into hash table.\n");
-    }
+    if (addedAny) printf("[OK] Student inserted/updated in hash table.\n");
 }
 
 // menu flow to search the hash table.
@@ -1331,14 +1385,38 @@ static void searchHashFlow(HashTable* table) {
     char name[MAX_NAME_LEN];
     printf("[INFO] Type 'exit' to return to main menu.\n");
     if (!getValidatedInput("Enter Student Name to search: ", name, sizeof(name), isLettersSpaces, "[ERROR] Name must contain letters only.\n")) return;
-    int index = hashSearch(table, name);
-    if (index < 0) {
-        printf("[INFO] Name not found in hash table.\n");
-    } else {
-        HashEntry* entry = &table->entries[index];
-        printf("Found at slot %d:\n", index);
-        printStudentRecord(&entry->data);
+    int* indices = (int*)malloc(sizeof(int) * table->capacity);
+    if (!indices) {
+        printf("[ERROR] Unable to allocate memory.\n");
+        return;
     }
+    int matchCount = collectHashMatches(table, name, indices, table->capacity);
+    if (matchCount == 0) {
+        printf("[INFO] Name not found in hash table.\n");
+        free(indices);
+        return;
+    }
+    printf("Matches found:\n");
+    for (int i = 0; i < matchCount; i++) {
+        HashEntry* entry = &table->entries[indices[i]];
+        printf("%d) %s (ID %s)\n", i + 1, entry->data.name, entry->data.studentID);
+    }
+    if (matchCount == 1) {
+        HashEntry* entry = &table->entries[indices[0]];
+        printf("Selected:\n");
+        printStudentRecord(&entry->data);
+        free(indices);
+        return;
+    }
+    int canceled = 0;
+    int choice = readIntWithPromptOrExit("Select student number: ", 1, matchCount, &canceled);
+    if (canceled) {
+        free(indices);
+        return;
+    }
+    HashEntry* entry = &table->entries[indices[choice - 1]];
+    printStudentRecord(&entry->data);
+    free(indices);
 }
 
 // menu flow to delete from the hash table.
@@ -1348,10 +1426,42 @@ static void deleteHashFlow(HashTable* table) {
         return;
     }
     char name[MAX_NAME_LEN];
-    printf("[INFO] Type 'exit' to return to main menu.\n");
-    if (!getValidatedInput("Enter Student Name to delete from hash table: ", name, sizeof(name), isLettersSpaces, "[ERROR] Name must contain letters only.\n")) return;
-    if (hashDelete(table, name)) printf("[OK] Entry removed from hash table.\n");
-    else printf("[ERROR] Name not found in hash table.\n");
+    while (1) {
+        printf("[INFO] Type 'exit' to return to main menu.\n");
+        if (!getValidatedInput("Enter Student Name to delete from hash table: ", name, sizeof(name), isLettersSpaces, "[ERROR] Name must contain letters only.\n")) return;
+        int* indices = (int*)malloc(sizeof(int) * table->capacity);
+        if (!indices) {
+            printf("[ERROR] Unable to allocate memory.\n");
+            return;
+        }
+        int matchCount = collectHashMatches(table, name, indices, table->capacity);
+        if (matchCount == 0) {
+            printf("[ERROR] Name not found in hash table. Try again or type 'exit'.\n");
+            free(indices);
+            continue;
+        }
+        printf("Matches found:\n");
+        for (int i = 0; i < matchCount; i++) {
+            HashEntry* entry = &table->entries[indices[i]];
+            printf("%d) %s (ID %s)\n", i + 1, entry->data.name, entry->data.studentID);
+        }
+        int canceled = 0;
+        int choice = 1;
+        if (matchCount > 1) {
+            choice = readIntWithPromptOrExit("Select student number: ", 1, matchCount, &canceled);
+            if (canceled) {
+                free(indices);
+                return;
+            }
+        }
+        if (hashDeleteAt(table, indices[choice - 1])) {
+            printf("[OK] Entry removed from hash table.\n");
+            free(indices);
+            return;
+        }
+        free(indices);
+        printf("[ERROR] Unable to delete entry. Try again.\n");
+    }
 }
 
 // print the hash function description.
@@ -1359,34 +1469,32 @@ static void printHashInfo(void) {
     printf("Hash Function: h(s) = ((h << 5) + c) mod table_size, case-insensitive.\n");
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char* argv[]) {
     initBaseDir(argc > 0 ? argv[0] : NULL);
     AVLNode* root = NULL;
     HashTable table;
     table.entries = NULL;
     table.capacity = 0;
     table.size = 0;
+    printf("[INFO] reg.txt loaded.\n");
     root = loadFromFile("reg.txt", root);
     int running = 1;
     while (running) {
-        printf("\n============================================\n");
-        printf("   COURSE REGISTRATION MANAGEMENT SYSTEM\n");
-        printf("============================================\n");
+        printf("\nCOURSE REGISTRATION MANAGEMENT SYSTEM\n");
         printf("1. Insert new registration\n");
         printf("2. Find student by name and update\n");
         printf("3. List students registered in a course\n");
         printf("4. Delete a student's registration\n");
-        printf("5. Save AVL tree to reg.txt\n");
-        printf("6. Build hash table and export students_hash.data\n");
-        printf("7. Print hash table\n");
-        printf("8. Print hash table size\n");
-        printf("9. Show hash function description\n");
-        printf("10. Insert student into hash table\n");
-        printf("11. Search student in hash table\n");
-        printf("12. Delete student from hash table\n");
-        printf("13. Save hash table back to reg.txt\n");
-        printf("14. Exit\n");
-        int choice = readIntWithPrompt("Select option: ", 1, 14);
+        printf("5. Build hash table and export students_hash.data\n");
+        printf("6. Print hash table\n");
+        printf("7. Print hash table size\n");
+        printf("8. Show hash function description\n");
+        printf("9. Insert student into hash table\n");
+        printf("10. Search student in hash table\n");
+        printf("11. Delete student from hash table\n");
+        printf("12. Save hash table back to reg.txt\n");
+        printf("13. Exit\n");
+        int choice = readIntWithPrompt("Select option: ", 1, 13);
         switch (choice) {
             case 1:
                 root = insertRegistrationFlow(root);
@@ -1401,40 +1509,40 @@ int main(int argc, char** argv) {
                 root = deleteRegistrationFlow(root);
                 break;
             case 5:
-                saveTreeToFile("reg.txt", root);
-                break;
-            case 6:
                 buildHashTable(&table, root);
                 if (root) {
-                    freeTree(root);
-                    root = NULL;
-                    printf("[INFO] AVL tree cleared after exporting to students_hash.data.\n");
+                    int clearChoice = readIntWithPrompt("Clear AVL? (1 = Yes, 2 = No): ", 1, 2);
+                    if (clearChoice == 1) {
+                        freeTree(root);
+                        root = NULL;
+                        printf("[INFO] AVL tree cleared.\n");
+                    }
                 }
                 break;
-            case 7:
+            case 6:
                 printHashTable(&table);
                 break;
-            case 8:
+            case 7:
                 if (table.entries) printf("Hash table size: %d entries, %d capacity.\n", table.size, table.capacity);
                 else printf("[INFO] Hash table not built yet.\n");
                 break;
-            case 9:
+            case 8:
                 printHashInfo();
                 break;
-            case 10:
+            case 9:
                 insertIntoHashFlow(&table);
                 break;
-            case 11:
+            case 10:
                 searchHashFlow(&table);
                 break;
-            case 12:
+            case 11:
                 deleteHashFlow(&table);
                 break;
-            case 13:
+            case 12:
                 saveHashTableToFile(&table, "reg.txt");
                 running = 0;
                 break;
-            case 14:
+            case 13:
                 running = 0;
                 break;
         }
