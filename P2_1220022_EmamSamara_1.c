@@ -660,28 +660,6 @@ static int countStudents(AVLNode* root) {
     return 1 + countStudents(root->left) + countStudents(root->right);
 }
 
-// export student base data to a file.
-static void exportStudentsRecursive(FILE* file, AVLNode* node) {
-    if (!node) return;
-    exportStudentsRecursive(file, node->left);
-    fprintf(file, "%s#%s#%s\n", node->data.name, node->data.studentID, node->data.major);
-    exportStudentsRecursive(file, node->right);
-}
-
-// write student data to students_hash.data.
-static void exportStudentsData(const char* filename, AVLNode* root) {
-    char path[512];
-    buildPath(filename, path, sizeof(path));
-    FILE* file = fopen(path, "w");
-    if (!file) {
-        printf("[ERROR] Cannot open %s\n", filename);
-        return;
-    }
-    exportStudentsRecursive(file, root);
-    fclose(file);
-    printf("[OK] Student data exported to %s\n", filename);
-}
-
 // count non-empty lines in a file.
 static int countLinesInFile(const char* filename) {
     char path[512];
