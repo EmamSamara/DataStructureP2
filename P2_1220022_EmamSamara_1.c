@@ -5,6 +5,57 @@
 #include <stdlib.h>
 #include <string.h>
 
+static char g_baseDir[512] = "";
+
+// get the folder of the running executable using argv[0].
+static void initBaseDir(const char* argv0) {
+    if (!argv0) return;
+    const char* slash = strrchr(argv0, '\\');
+    if (!slash) slash = strrchr(argv0, '/');
+    if (!slash) return;
+    size_t len = (size_t)(slash - argv0);
+    if (len >= sizeof(g_baseDir)) len = sizeof(g_baseDir) - 1;
+    memcpy(g_baseDir, argv0, len);
+    g_baseDir[len] = '\0';
+}
+
+// build a path using the executable folder if available.
+static void buildPath(const char* filename, char* out, size_t size) {
+    if (!filename || !out || size == 0) return;
+    if (g_baseDir[0] == '\0') {
+        strncpy(out, filename, size - 1);
+        out[size - 1] = '\0';
+        return;
+    }
+    snprintf(out, size, "%s\\%s", g_baseDir, filename);
+}
+
+// check for basic ASCII whitespace.
+static int isSpaceChar(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+
+// check for ASCII letter.
+static int isAlphaChar(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+// check for ASCII digit.
+static int isDigitChar(char c) {
+    return c >= '0' && c <= '9';
+}
+
+// check for ASCII alphanumeric.
+static int isAlnumChar(char c) {
+    return isAlphaChar(c) || isDigitChar(c);
+}
+
+// convert ASCII letter to lowercase.
+static char toLowerChar(char c) {
+    if (c >= 'A' && c <= 'Z') return (char)(c + ('a' - 'A'));
+    return c;
+}
+
 #define MAX_NAME_LEN 128
 #define MAX_ID_LEN 32
 #define MAX_MAJOR_LEN 128
@@ -512,16 +563,6 @@ static void collectByName(AVLNode* root, const char* name, NodeList* list) {
     collectByName(root->right, name, list);
 }
 
-// check if a name already exists in the AVL tree.
-static int nameExists(AVLNode* root, const char* name, const char* excludeID) {
-    if (!root) return 0;
-    if (nameExists(root->left, name, excludeID)) return 1;
-    if (equalsIgnoreCase(root->data.name, name)) {
-        if (!excludeID || strcmp(root->data.studentID, excludeID) != 0) return 1;
-    }
-    return nameExists(root->right, name, excludeID);
-}
-
 // free the result list memory.
 static void freeNodeList(NodeList* list) {
     free(list->data);
@@ -603,14 +644,16 @@ static int hashInsert(HashTable* table, const char* name, const char* id, const 
 
 // save all AVL data to a file.
 static void saveTreeToFile(const char* filename, AVLNode* root) {
-    FILE* file = fopen(filename, "w");
+    char path[512];
+    buildPath(filename, path, sizeof(path));
+    FILE* file = fopen(path, "w");
     if (!file) {
-        printf("[ERROR] Unable to write to %s\n", filename);
+        printf("[ERROR] Unable to write to %s\n", path);
         return;
     }
     saveTreeRecursive(file, root);
     fclose(file);
-    printf("[OK] Data saved to %s\n", filename);
+    printf("[OK] Data saved to %s\n", path);
 }
 
 // count total students in the AVL tree.
@@ -641,7 +684,9 @@ static void exportStudentsData(const char* filename, AVLNode* root) {
 
 // count non-empty lines in a file.
 static int countLinesInFile(const char* filename) {
-    FILE* file = fopen(filename, "r");
+    char path[512];
+    buildPath(filename, path, sizeof(path));
+    FILE* file = fopen(path, "r");
     if (!file) return 0;
     int count = 0;
     char line[LINE_BUFFER];
@@ -656,9 +701,11 @@ static int countLinesInFile(const char* filename) {
 
 // load hash table entries from a file.
 static void loadHashTableFromFile(HashTable* table, const char* filename) {
-    FILE* file = fopen(filename, "r");
+    char path[512];
+    buildPath(filename, path, sizeof(path));
+    FILE* file = fopen(path, "r");
     if (!file) {
-        printf("[ERROR] Cannot open %s\n", filename);
+        printf("[ERROR] Cannot open %s\n", path);
         return;
     }
     char line[LINE_BUFFER];
@@ -692,9 +739,11 @@ static void loadHashTableFromFile(HashTable* table, const char* filename) {
 
 // load registrations from reg.txt into the AVL tree.
 static AVLNode* loadFromFile(const char* filename, AVLNode* root) {
-    FILE* file = fopen(filename, "r");
+    char path[512];
+    buildPath(filename, path, sizeof(path));
+    FILE* file = fopen(path, "r");
     if (!file) {
-        printf("[INFO] File %s not found. Starting with empty records.\n", filename);
+        printf("[INFO] File %s not found. Starting with empty records.\n", path);
         return root;
     }
     char line[LINE_BUFFER];
@@ -724,7 +773,7 @@ static AVLNode* loadFromFile(const char* filename, AVLNode* root) {
         loaded++;
     }
     fclose(file);
-    printf("[OK] Loaded %d registrations from %s\n", loaded, filename);
+    printf("[OK] Loaded %d registrations from %s\n", loaded, path);
     return root;
 }
 
@@ -930,9 +979,11 @@ static void saveHashTableToFile(HashTable* table, const char* filename) {
         printf("[ERROR] Hash table is not initialized.\n");
         return;
     }
-    FILE* file = fopen(filename, "w");
+    char path[512];
+    buildPath(filename, path, sizeof(path));
+    FILE* file = fopen(path, "w");
     if (!file) {
-        printf("[ERROR] Cannot open %s.\n", filename);
+        printf("[ERROR] Cannot open %s.\n", path);
         return;
     }
     for (int i = 0; i < table->capacity; i++) {
@@ -940,7 +991,7 @@ static void saveHashTableToFile(HashTable* table, const char* filename) {
         if (entry->state == HASH_OCCUPIED) saveStudentCourses(file, &entry->data);
     }
     fclose(file);
-    printf("[OK] Hash table data saved to %s\n", filename);
+    printf("[OK] Hash table data saved to %s\n", path);
 }
 
 // menu flow to add a registration.
@@ -952,11 +1003,7 @@ static AVLNode* insertRegistrationFlow(AVLNode* root) {
     char courseTitle[MAX_TITLE_LEN];
     char semester[MAX_SEMESTER_LEN];
     printf("[INFO] Type 'exit' to return to main menu.\n");
-    while (1) {
-        if (!getValidatedInput("Enter Student Name: ", name, sizeof(name), isLettersSpaces, "[ERROR] Name must contain letters only.\n")) return root;
-        if (!nameExists(root, name, NULL)) break;
-        printf("[ERROR] Student name already exists. Try again.\n");
-    }
+    if (!getValidatedInput("Enter Student Name: ", name, sizeof(name), isLettersSpaces, "[ERROR] Name must contain letters only.\n")) return root;
     while (1) {
         if (!getValidatedInput("Enter Student ID: ", id, sizeof(id), isDigitsOnly, "[ERROR] Student ID must contain digits only.\n")) return root;
         if (!findByID(root, id)) break;
@@ -1007,30 +1054,13 @@ static AVLNode* findStudentByNameFlow(AVLNode* root) {
         freeNodeList(&list);
         return root;
     }
-    AVLNode* target = NULL;
-    if (list.size == 1) target = findByID(root, list.data[0]);
-    else {
-        printf("Multiple students found:\n");
-        for (int i = 0; i < list.size; i++) {
-            AVLNode* entry = findByID(root, list.data[i]);
-            if (entry) printf("%d) %s (ID %s)\n", i + 1, entry->data.name, entry->data.studentID);
-            else printf("%d) <Missing> (ID %s)\n", i + 1, list.data[i]);
-        }
-        int canceled = 0;
-        int choice = readIntWithPromptOrExit("Select student number: ", 1, list.size, &canceled);
-        if (canceled) {
-            freeNodeList(&list);
-            return root;
-        }
-        target = findByID(root, list.data[choice - 1]);
-    }
-    if (!target) {
-        printf("[ERROR] Student record is missing.\n");
-        freeNodeList(&list);
-        return root;
+    printf("Students found with this name:\n");
+    for (int i = 0; i < list.size; i++) {
+        AVLNode* entry = findByID(root, list.data[i]);
+        if (entry) printf("%d) %s (ID %s)\n", i + 1, entry->data.name, entry->data.studentID);
+        else printf("%d) <Missing> (ID %s)\n", i + 1, list.data[i]);
     }
     
-    printStudent(target);
     printf("Update this student's information? (1 = Yes, 2 = No): ");
     int canceled = 0;
     int update = readIntWithPromptOrExit("", 1, 2, &canceled);
@@ -1039,6 +1069,29 @@ static AVLNode* findStudentByNameFlow(AVLNode* root) {
         return root;
     }
     if (update == 1) {
+        char targetId[MAX_ID_LEN];
+        while (1) {
+            if (!getValidatedInput("Enter Student ID from the list: ", targetId, sizeof(targetId), isDigitsOnly, "[ERROR] Student ID must contain digits only.\n")) {
+                freeNodeList(&list);
+                return root;
+            }
+            int match = 0;
+            for (int i = 0; i < list.size; i++) {
+                if (strcmp(list.data[i], targetId) == 0) {
+                    match = 1;
+                    break;
+                }
+            }
+            if (match) break;
+            printf("[ERROR] Student ID not in the list. Try again.\n");
+        }
+        AVLNode* target = findByID(root, targetId);
+        if (!target) {
+            printf("[ERROR] Student record is missing.\n");
+            freeNodeList(&list);
+            return root;
+        }
+        printStudent(target);
         char buffer[MAX_MAJOR_LEN];
         char newId[MAX_ID_LEN];
         char nameCopy[MAX_NAME_LEN];
@@ -1052,13 +1105,9 @@ static AVLNode* findStudentByNameFlow(AVLNode* root) {
             }
             if (strlen(buffer) == 0) break;
             if (isLettersSpaces(buffer)) {
-                if (nameExists(root, buffer, target->data.studentID)) {
-                    printf("[ERROR] Student name already exists.\n");
-                } else {
-                    strncpy(target->data.name, buffer, MAX_NAME_LEN - 1);
-                    target->data.name[MAX_NAME_LEN - 1] = '\0';
-                    break;
-                }
+                strncpy(target->data.name, buffer, MAX_NAME_LEN - 1);
+                target->data.name[MAX_NAME_LEN - 1] = '\0';
+                break;
             } else {
                 printf("[ERROR] Name must contain letters only.\n");
             }
@@ -1310,7 +1359,8 @@ static void printHashInfo(void) {
     printf("Hash Function: h(s) = ((h << 5) + c) mod table_size, case-insensitive.\n");
 }
 
-int main() {
+int main(int argc, char** argv) {
+    initBaseDir(argc > 0 ? argv[0] : NULL);
     AVLNode* root = NULL;
     HashTable table;
     table.entries = NULL;
@@ -1397,27 +1447,3 @@ int main() {
 }
 
 // check for basic ASCII whitespace.
-static int isSpaceChar(char c) {
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
-}
-
-// check for ASCII letter.
-static int isAlphaChar(char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-}
-
-// check for ASCII digit.
-static int isDigitChar(char c) {
-    return c >= '0' && c <= '9';
-}
-
-// check for ASCII alphanumeric.
-static int isAlnumChar(char c) {
-    return isAlphaChar(c) || isDigitChar(c);
-}
-
-// convert ASCII letter to lowercase.
-static char toLowerChar(char c) {
-    if (c >= 'A' && c <= 'Z') return (char)(c + ('a' - 'A'));
-    return c;
-}
